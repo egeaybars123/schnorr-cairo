@@ -8,11 +8,24 @@ use core::poseidon::PoseidonTrait;
 use core::hash::{HashStateTrait, HashStateExTrait};
 use core::math::u256_mul_mod_n;
 
-impl EcPointDisplay of Display<EcPoint> {
+pub impl EcPointDisplay of Display<EcPoint> {
     fn fmt(self: @EcPoint, ref f: Formatter) -> Result<(), Error> {
         let non_zero: NonZeroEcPoint = (*self).try_into().unwrap();
         let (x, y): (felt252, felt252) = ec_point_unwrap(non_zero);
         writeln!(f, "Point ({x}, {y})")
+    }
+}
+
+impl PartialEqImpl of PartialEq<EcPoint> {
+    fn eq(lhs: @EcPoint, rhs: @EcPoint) -> bool {
+        let (lhs_x, lhs_y): (felt252, felt252) = ec_point_unwrap((*lhs).try_into().unwrap());
+        let (rhs_x, rhs_y): (felt252, felt252) = ec_point_unwrap((*rhs).try_into().unwrap());
+
+        if ((rhs_x == lhs_x) && (rhs_y == lhs_y)) {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -64,6 +77,8 @@ fn main() {
     };
     let shared_nonce = initial_shared_nonce.finalize();
 
+    println!("Shared Nonce Key: {}", shared_nonce);
+
     let (R_x, _): (felt252, felt252) = ec_point_unwrap(shared_nonce.try_into().unwrap());
     let (X_x, _): (felt252, felt252) = ec_point_unwrap(shared_public_key.try_into().unwrap());
     let e = PoseidonTrait::new().update(R_x).update(X_x).update(message).finalize(); //Challenge
@@ -74,7 +89,7 @@ fn main() {
         let r_i = *secret_nonce_array.at(sig_index);
         let a_i_value = *a_i.at(sig_index);
         let rhs = mul_mod_p(e, mul_mod_p(k_i, a_i_value, ORDER), ORDER);
-        signature += rhs + r_i; //TODO: Implement modular addition here.
+        signature = felt252_add_mod_p(signature, felt252_add_mod_p(rhs, r_i, ORDER), ORDER);
         sig_index += 1;
     };
 
@@ -83,8 +98,7 @@ fn main() {
     //******************** SIGNATURE VERIFICATION ********************
     let s_G = generator.mul(signature);
     let rhs = shared_nonce + shared_public_key.mul(e);
-    println!("sG: {}", s_G);
-    println!("R + eX: {}", rhs);
+    println!("Aggregated Signature Verification: {}", s_G == rhs);
 }
 
 fn schnorr() {
@@ -124,7 +138,7 @@ fn schnorr() {
     }
 }
 
-fn mul_mod_p(x: felt252, y: felt252, p: felt252) -> felt252 {
+pub fn mul_mod_p(x: felt252, y: felt252, p: felt252) -> felt252 {
     let x_u256: u256 = x.into();
     let y_u256: u256 = y.into();
     let p_u256: u256 = p.into();
@@ -132,4 +146,20 @@ fn mul_mod_p(x: felt252, y: felt252, p: felt252) -> felt252 {
     let result: u256 = u256_mul_mod_n(x_u256, y_u256, p_u256.try_into().unwrap());
 
     return result.try_into().unwrap();
+}
+
+fn felt252_add_mod_p(x: felt252, y: felt252, p: felt252) -> felt252 {
+    let x_u256: u256 = x.into();
+    
+    let sum = x + y;
+
+    //Checks for overflow - behaving as checked_add
+    if sum.into() < x_u256 {
+        let felt252_max = 0x800000000000011000000000000000000000000000000000000000000000000;
+        let mod_difference = felt252_max - p;
+
+        return sum + mod_difference + 1;
+    }
+
+    return sum;
 }
